@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Crystal‑like Synth (HTML5 + Web Audio)</title>
+<style>
+  :root {
+    --bg:#101216; --panel:#171a20; --panel2:#1e232b; --fg:#e6e6e6; --muted:#9aa3ad;
+    --accent:#53b3ff; --accent2:#7bda7b; --warn:#ffb653;
+  }
+  * { box-sizing: border-box; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+  body { margin:0; background:linear-gradient(180deg,#0b0d11,#12151b 40%, #0b0d11); color:var(--fg); }
+  header { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; background:var(--panel2); border-bottom:1px solid #222a33; position:sticky; top:0; z-index:10;}
+  header h1 { font-size:16px; letter-spacing:0.04em; margin:0; color:#dfe9f6; }
+  header .row { display:flex; gap:8px; align-items:center; }
+  button, select, input[type="range"] { appearance:none; border:none; border-radius:6px; background:#0f1217; color:var(--fg); }
+  button { padding:8px 12px; background:var(--accent); color:#061018; font-weight:600; box-shadow:0 1px 0 #0b2233 inset; cursor:pointer; }
+  button.secondary { background:#222a33; color:#c9d3dd; }
+  button:disabled { filter:grayscale(0.7); opacity:0.7; cursor:not-allowed; }
+  main { padding:12px; display:grid; grid-template-columns: 2.2fr 2.2fr 1.3fr; grid-template-rows:auto auto 1fr auto; gap:12px; }
+  .panel { background:var(--panel); border:1px solid #222933; border-radius:10px; padding:10px; }
+  .title { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.12em; margin-bottom:8px; }
+  .osc-grid { display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; }
+  .card { background:var(--panel2); border:1px solid #293241; border-radius:8px; padding:8px; }
+  .row { display:flex; gap:8px; align-items:center; }
+  .col { display:flex; flex-direction:column; gap:6px; }
+  label { font-size:11px; color:#aeb8c4; display:flex; justify-content:space-between; gap:8px; }
+  label span { color:#7f8b97; }
+  .small { font-size:10px; color:#8997a3; }
+  input[type="range"] { width:100%; height:24px; background:transparent; }
+  input[type="range"]::-webkit-slider-runnable-track { height:6px; background:#2a3544; border-radius:6px; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:16px; height:16px; margin-top:-5px; border-radius:50%; background:var(--accent); border:1px solid #0a1924; }
+  select { padding:6px 8px; background:#0d1117; border:1px solid #222a33; }
+  .lfo-grid { display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; }
+  .env-grid { display:grid; grid-template-columns: 1fr; gap:8px; }
+  .fx-grid { display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; }
+  .kbd { grid-column:1 / -1; }
+  .keys { display:grid; grid-template-columns: repeat(28, minmax(18px,1fr)); gap:2px; background:#0d1116; padding:8px; border-radius:10px; border:1px solid #1f2731; }
+  .key { position:relative; height:72px; border-radius:6px; cursor:pointer; user-select:none; }
+  .white { background:#dfe6ee; border:1px solid #b9c4d1; }
+  .white.active { background:#a9d0ff; border-color:#6bb3ff; }
+  .black { background:#1a222d; border:1px solid #0f151c; height:48px; margin:0 -12px; z-index:2; }
+  .black.active { background:#316ca8; border-color:#163b5e; }
+  .legend { position:absolute; bottom:4px; left:6px; font-size:10px; color:#3a4654; }
+  .black .legend { color:#9fc9ff; }
+  .grid-slim { display:grid; grid-template-columns: repeat(2, 1fr); gap:6px; }
+  .meter { height:6px; border-radius:6px; background:#212935; overflow:hidden; }
+  .bar { height:100%; width:10%; background:linear-gradient(90deg,#53b3ff,#7bda7b); transition:width 60ms linear; }
+  .notehelp { font-size:11px; color:#93a1b1; }
+  footer { padding:8px 12px; color:#7d8a97; font-size:11px; text-align:center; }
+  @media (max-width: 1200px) {
+    main { grid-template-columns:1fr; }
+    .lfo-grid, .osc-grid, .fx-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body><script type="module">
+(async () => {
+  // Подтягиваем Three.js
+  const THREE = await import('https://unpkg.com/three@0.158.0/build/three.module.js');
+
+  // ---------- CSS: добавляем стили ----------
+  const style = document.createElement('style');
+  style.textContent = `
+  /* --- 3D Мухомор — стили --- */
+  .mush-wrap { display:grid; grid-template-columns: 2fr 1fr; gap:12px; align-items:stretch; margin-top:14px; }
+  .mush-viewport { position:relative; height:420px; background:#0f141c; border:1px solid #1e2733; border-radius:10px; overflow:hidden; }
+  .mush-ui .readout { display:grid; grid-template-columns: 1fr 1fr; gap:6px; font-size:12px; color:#b9c6d3; }
+  .mush-ui .badge { background:#102131; color:#9fd4ff; padding:2px 6px; border-radius:6px; border:1px solid #244059; text-align:center; }
+  .mush-ui .sub { font-size:11px; color:#8a98a8; }
+  .mush-ui .boxed { background:#0d1117; border:1px solid #222a33; border-radius:8px; padding:8px; }
+  .mush-ui .hint { font-size:11px; color:#92a2b4; line-height:1.3; }
+  .mush-ui .row { display:flex; gap:8px; align-items:center; justify-content:space-between; }
+  .mush-ui .title { font-weight:600; margin-bottom:8px; }
+  .mush-ui label { width:100%; display:block; }
+  .mush-legend { position:absolute; left:8px; bottom:8px; font-size:11px; color:#88a2bf; background:rgba(15,20,28,0.7); padding:6px 8px; border-radius:6px; border:1px solid #203043; }
+  @media (max-width: 1200px) {
+    .mush-wrap { grid-template-columns: 1fr; }
+    .mush-viewport { height:380px; }
+  }`;
+  document.head.appendChild(style);
+
+  // ---------- HTML: добавляем секцию ----------
+  const tpl = document.createElement('template');
+  tpl.innerHTML = `
+    <section class="panel mush-wrap">
+      <div class="col mush-viewport" id="mushViewport">
+        <div class="mush-legend">ЛКМ — крутить • Колесо — Z‑вращение</div>
+      </div>
+      <div class="col mush-ui">
+        <div class="title">3D Мухомор — управление эффектами</div>
+        <div class="card boxed">
+          <label>Управляемый эффект
+            <select id="mushTarget">
+              <option value="filter">Фильтр (X: Cutoff, Y: Q)</option>
+              <option value="flanger">Flanger (X: Rate, Y: Depth, Z: Feedback)</option>
+              <option value="delay">Delay (X: Time, Y: Mix, Z: Feedback)</option>
+              <option value="chorus">Chorus (X: Rate, Y: Depth, Z: Mix)</option>
+              <option value="master">Master (X: Output)</option>
+              <option value="osc1">OSC1 (X: Gain, Y: Detune, Z: Sustain)</option>
+              <option value="osc2">OSC2 (X: Gain, Y: Detune, Z: Sustain)</option>
+              <option value="osc3">OSC3 (X: Gain, Y: Detune, Z: Sustain)</option>
+              <option value="osc4">OSC4 (X: Gain, Y: Detune, Z: Sustain)</option>
+              <option value="osc5">OSC5 (X: Gain, Y: Detune, Z: Sustain)</option>
+            </select>
+          </label>
+          <div class="row" style="margin-top:8px;">
+            <label class="row small" style="gap:6px;"><input type="checkbox" id="mushAuto" checked> авто‑вращение</label>
+            <button class="secondary" id="mushReset" type="button">Сброс поворота</button>
+          </div>
+          <div class="readout" style="margin-top:10px;">
+            <div class="badge">X=<span id="rx">0.00</span></div>
+            <div class="badge">Y=<span id="ry">0.00</span></div>
+            <div class="badge">Z=<span id="rz">0.00</span></div>
+            <div class="sub" id="mushHint" style="grid-column:1/-1; margin-top:6px;"></div>
+          </div>
+          <div class="hint" style="margin-top:10px;">
+            Оси нормализованы в 0..1 по модулю 360°. Повороты меняют существующие слайдеры эффектов — сам синт не трогаем.
+          </div>
+        </div>
+      </div>
+    </section>
+  `.trim();
+
+  // Куда вставлять: после последней .panel, иначе — в конец <main> или <body>
+  const lastPanel = [...document.querySelectorAll('.panel')].pop();
+  const host = lastPanel?.parentElement || document.querySelector('main') || document.body;
+  if (lastPanel) {
+    lastPanel.insertAdjacentElement('afterend', tpl.content.firstElementChild);
+  } else {
+    host.appendChild(tpl.content.firstElementChild);
+  }
+
+  // ---------- JS: создаём сцену и логику ----------
+  const viewport = document.getElementById('mushViewport');
+
+  // Сцена, камера, рендерер
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, viewport.clientWidth/viewport.clientHeight, 0.1, 100);
+  camera.position.set(0, 1.6, 5);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.setSize(viewport.clientWidth, viewport.clientHeight);
+  viewport.appendChild(renderer.domElement);
+
+  // Свет
+  scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+  const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+  dir.position.set(4, 8, 6);
+  scene.add(dir);
+
+  // Модель мухомора
+  const mushroom = new THREE.Group();
+
+  // Ножка
+  const stemGeo = new THREE.CylinderGeometry(0.35, 0.45, 2.2, 32, 1, false);
+  const stemMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f0, roughness: 0.85, metalness: 0.0 });
+  const stem = new THREE.Mesh(stemGeo, stemMat);
+  stem.position.y = 1.1;
+  stem.castShadow = stem.receiveShadow = true;
+  mushroom.add(stem);
+
+  // Шляпка
+  const capGeo = new THREE.SphereGeometry(1.3, 48, 32, 0, Math.PI*2, 0, Math.PI/2);
+  const capMat = new THREE.MeshStandardMaterial({ color: 0xd20000, roughness: 0.6, metalness: 0.05 });
+  const cap = new THREE.Mesh(capGeo, capMat);
+  cap.position.y = 2.2;
+  cap.castShadow = cap.receiveShadow = true;
+  mushroom.add(cap);
+
+  // Белые крапинки
+  const dots = new THREE.Group();
+  const dotMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.0 });
+  for (let i=0; i<60; i++) {
+    const r = 1.28;
+    const theta = Math.random()*Math.PI*2;
+    const phi = Math.random()*Math.PI*0.48;
+    const x = r * Math.sin(phi) * Math.cos(theta);
+    const y = r * Math.cos(phi);
+    const z = r * Math.sin(phi) * Math.sin(theta);
+    const s = 0.06 + Math.random()*0.08;
+    const dotGeo = new THREE.SphereGeometry(s, 12, 10);
+    const dot = new THREE.Mesh(dotGeo, dotMat);
+    dot.position.set(x, y + cap.position.y, z);
+    dot.lookAt(new THREE.Vector3(x, y + cap.position.y, z).multiplyScalar(1.02));
+    dots.add(dot);
+  }
+  mushroom.add(dots);
+
+  // Подложка
+  const groundGeo = new THREE.CircleGeometry(3.5, 48);
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0x0e1520, roughness: 1.0, metalness: 0.0 });
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI/2;
+  ground.position.y = 0.02;
+  scene.add(ground);
+
+  scene.add(mushroom);
+
+  // Управление мышью
+  let dragging = false;
+  let lastX = 0, lastY = 0;
+  const rotSpeed = 0.015;
+  viewport.addEventListener('mousedown', (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+  window.addEventListener('mouseup', () => { dragging = false; });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    mushroom.rotation.y += dx * rotSpeed;
+    mushroom.rotation.x += dy * rotSpeed;
+  }, { passive:true });
+
+  viewport.addEventListener('wheel', (e) => {
+    const delta = Math.sign(e.deltaY) * 0.07;
+    mushroom.rotation.z += delta;
+  }, { passive:true });
+
+  // Автовращение / сброс
+  const $auto = document.getElementById('mushAuto');
+  const $btnReset = document.getElementById('mushReset');
+  $btnReset?.addEventListener('click', () => { mushroom.rotation.set(0, 0, 0); });
+
+  // Вывод и связь с эффектами
+  const $rx = document.getElementById('rx');
+  const $ry = document.getElementById('ry');
+  const $rz = document.getElementById('rz');
+  const $sel = document.getElementById('mushTarget');
+  const $hint = document.getElementById('mushHint');
+
+  function normAngle(rad) {
+    const twoPi = Math.PI*2;
+    const m = ((rad % twoPi) + twoPi) % twoPi;
+    return m / twoPi; // 0..1
+  }
+  function lerp(a,b,t){ return a + (b-a)*t; }
+  function setValueAndInput(el, val) {
+    if (!el || typeof val === 'undefined' || val === null) return;
+    const v = String(val);
+    if (el.value === v) return;
+    el.value = v;
+    el.dispatchEvent(new Event('input', { bubbles:true }));
+  }
+  function byId(id){ return document.getElementById(id); }
+  function bySel(sel){ return document.querySelector(sel); }
+
+  function applyMushToFX(nx, ny, nz) {
+    const target = $sel?.value || 'filter';
+
+    // Фильтр: ожидаемые id: #fCut, #fQ
+    if (target === 'filter') {
+      setValueAndInput(byId('fCut'), Math.round(lerp(80, 8000, nx)));
+      setValueAndInput(byId('fQ'),   Number(lerp(0.1, 20, ny).toFixed(2)));
+      $hint.textContent = 'X→Cutoff, Y→Q';
+      return;
+    }
+
+    // Flanger: #flRate, #flDepth, #flFb
+    if (target === 'flanger') {
+      setValueAndInput(byId('flRate'),  Number(lerp(0.05, 6, nx).toFixed(2)));
+      setValueAndInput(byId('flDepth'), Number(lerp(0.0005, 0.01, ny).toFixed(4)));
+      setValueAndInput(byId('flFb'),    Number(lerp(0, 0.9, nz).toFixed(2)));
+      $hint.textContent = 'X→Rate, Y→Depth, Z→Feedback';
+      return;
+    }
+
+    // Delay: #dlTime, #dlMix, #dlFb
+    if (target === 'delay') {
+      setValueAndInput(byId('dlTime'), Number(lerp(0.05, 1.2, nx).toFixed(2)));
+      setValueAndInput(byId('dlMix'),  Number(lerp(0, 0.9, ny).toFixed(2)));
+      setValueAndInput(byId('dlFb'),   Number(lerp(0, 0.9, nz).toFixed(2)));
+      $hint.textContent = 'X→Time, Y→Mix, Z→Feedback';
+      return;
+    }
+
+    // Chorus: #chRate, #chDepth, #chMix
+    if (target === 'chorus') {
+      setValueAndInput(byId('chRate'),  Number(lerp(0.05, 6, nx).toFixed(2)));
+      setValueAndInput(byId('chDepth'), Number(lerp(0.001, 0.03, ny).toFixed(4)));
+      setValueAndInput(byId('chMix'),   Number(lerp(0, 0.9, nz).toFixed(2)));
+      $hint.textContent = 'X→Rate, Y→Depth, Z→Mix';
+      return;
+    }
+
+    // Master: глобальный output, если есть window.masterGain
+    if (target === 'master') {
+      const gain = Number(lerp(0.05, 1.2, nx).toFixed(2));
+      try { if (window.masterGain?.gain) window.masterGain.gain.value = gain; } catch {}
+      $hint.textContent = 'X→Output';
+      return;
+    }
+
+    // OSC1..OSC5 — ищем по data-атрибутам
+    const oscIdx = ({osc1:0,osc2:1,osc3:2,osc4:3,osc5:4})[target];
+    if (oscIdx !== undefined) {
+      const gainSel = `input[type="range"][data-osc="${oscIdx}"][data-prop="gain"]`;
+      setValueAndInput(bySel(gainSel), Number(lerp(0, 1, nx).toFixed(2)));
+
+      const detSel = `input[type="range"][data-osc="${oscIdx}"][data-prop="detune"]`;
+      setValueAndInput(bySel(detSel), Math.round(lerp(-1200, 1200, ny)));
+
+      const susSel = `input[type="range"][data-osc="${oscIdx}"][data-prop="env_s"]`;
+      const susEl = bySel(susSel);
+      if (susEl) setValueAndInput(susEl, Number(lerp(0, 1, nz).toFixed(2)));
+
+      $hint.textContent = 'X→Gain, Y→Detune, Z→Sustain';
+      return;
+    }
+
+    $hint.textContent = '';
+  }
+
+  function onResize() {
+    const w = viewport.clientWidth, h = viewport.clientHeight;
+    renderer.setSize(w, h);
+    camera.aspect = w/h; camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', onResize);
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    if ($auto?.checked && !dragging) {
+      mushroom.rotation.y += 0.006;
+    }
+
+    const nx = normAngle(mushroom.rotation.x);
+    const ny = normAngle(mushroom.rotation.y);
+    const nz = normAngle(mushroom.rotation.z);
+
+    if ($rx) $rx.textContent = nx.toFixed(2);
+    if ($ry) $ry.textContent = ny.toFixed(2);
+    if ($rz) $rz.textContent = nz.toFixed(2);
+
+    applyMushToFX(nx, ny, nz);
+
+    renderer.render(scene, camera);
+  }
+
+  onResize();
+  animate();
+})();
+</script>
+
+<header>
+  <h1>Crystal‑like Synth</h1>
+  <div class="row">
+    <button id="startBtn">Start Audio</button>
+    <button class="secondary" id="panicBtn" disabled>Паника (всё заглушить)</button>
+    <label class="row"><span class="small">Glide</span><input id="glide" type="range" min="0" max="0.4" step="0.005" value="0.04" style="width:160px;"></label>
+  </div>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="title">Осцилляторы (5x)</div>
+    <div class="osc-grid" id="oscSection"></div>
+  </section>
+
+  <section class="panel">
+    <div class="title">LFO (5x) — маршрутизация в любой параметр</div>
+    <div class="lfo-grid" id="lfoSection"></div>
+  </section>
+
+  <section class="panel">
+    <div class="title">Modulation Envelope — назначение целей</div>
+    <div class="env-grid" id="envSection"></div>
+  </section>
+
+  <section class="panel">
+    <div class="title">Эффекты и фильтр</div>
+    <div class="fx-grid" id="fxSection"></div>
+  </section>
+
+  <section class="panel kbd">
+    <div class="row" style="justify-content:space-between; align-items:flex-end;">
+      <div class="title">Экранная клавиатура (клик/клавиши Z‑M, Q‑P, 1‑0)</div>
+      <div class="notehelp">Полифония 8 голосов • Velocity от давления клавиши не используется • Тоника/лад в Scale</div>
+    </div>
+    <div class="keys" id="piano"></div>
+    <div class="meter" style="margin-top:8px;"><div class="bar" id="outMeter"></div></div>
+  </section>
+</main>
+
+<footer>
+  Вдохновлено классическими софт‑синтезаторами. Только HTML5 + Web Audio. Сохраните страницу локально для офлайн‑работы.
+</footer>
+
+<script>
+(() => {
+  'use strict';
+
+  // -----------------------------
+  // Audio graph core
+  // -----------------------------
+  let ctx = null;
+  let masterGain, analyser, filter, chorus, chorusLFO, chorusDelay, flanger, flangerLFO, flangerDelay, flangerFb, delay, delayFb, delayMix;
+  const MAX_VOICES = 8;
+  const NUM_OSC = 5;
+  const NUM_LFO = 5;
+
+  const state = {
+    started: false,
+    glide: 0.04,
+    osc: Array.from({length: NUM_OSC}, (_,i)=>({
+      type:'sawtooth', gain: 0.3, detune: 0, envelope: { a:0.01,d:0.12,s:0.6,r:0.2 },
+    })),
+    env: { a:0.01,d:0.2,s:0.7,r:0.3, amount: 0.5, target: 'filterCutoff' },
+    filter: { type:'lowpass', cutoff: 1400, q: 0.8 },
+    delay: { time: 0.28, feedback: 0.32, mix: 0.22 },
+    flanger: { rate:0.25, depth:0.003, feedback:0.25 },
+    chorus: { rate:0.35, depth:0.008, mix:0.2 },
+    scale: { key:'C', type:'major' },
+    lfos: Array.from({length: NUM_LFO}, (_,i)=>({
+      wave:'sine', rate:0.8, depth:0.5, phase:0, smooth:0.02, target:'none', targetOsc:0, bipolar:true
+    })),
+  };
+
+  // Voice structure
+  class Voice {
+    constructor(note, freq) {
+      this.note = note;
+      this.baseFreq = freq;
+      this.startedAt = ctx.currentTime;
+      this.osc = [];
+      this.oscGains = [];
+      this.amp = ctx.createGain();
+      this.amp.gain.value = 0.0;
+      // build per-voice oscillators
+      for (let i=0;i<NUM_OSC;i++) {
+        const o = ctx.createOscillator();
+        o.type = state.osc[i].type;
+        const det = state.osc[i].detune|0;
+        o.frequency.value = freq * Math.pow(2, det/1200);
+        const g = ctx.createGain();
+        g.gain.value = state.osc[i].gain;
+        o.connect(g).connect(this.amp);
+        o.start();
+        this.osc.push(o);
+        this.oscGains.push(g);
+      }
+      // env to amp
+      this.amp.connect(inputFX);
+      this.envGate = 0; // 0..1
+      this.alive = true;
+      this.noteOn();
+    }
+    freqTarget(freq) {
+      // Portamento/glide on frequency
+      const t = ctx.currentTime;
+      const timeConst = Math.max(0.001, state.glide);
+      for (let i=0;i<NUM_OSC;i++) {
+        const o = this.osc[i];
+        const det = state.osc[i].detune|0;
+        const target = freq * Math.pow(2, det/1200);
+        try {
+          o.frequency.setTargetAtTime(target, t, timeConst);
+        } catch(e) {
+          o.frequency.value = target;
+        }
+      }
+    }
+    noteOn(velocity=0.8) {
+      const now = ctx.currentTime;
+      // amp ADSR (global)
+      const {a,d,s} = state.env;
+      const g = this.amp.gain;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(g.value, now);
+      g.linearRampToValueAtTime(velocity, now + Math.max(0.001, a));
+      g.linearRampToValueAtTime(velocity*s, now + Math.max(0.001, a)+Math.max(0.001,d));
+    }
+    noteOff() {
+      const now = ctx.currentTime;
+      const { r } = state.env;
+      const g = this.amp.gain;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(g.value, now);
+      g.linearRampToValueAtTime(0.0005, now + Math.max(0.001,r));
+      // stop after release
+      setTimeout(()=>this.destroy(), Math.ceil((r+0.1)*1000));
+    }
+    destroy() {
+      if (!this.alive) return;
+      this.alive = false;
+      try { this.amp.disconnect(); } catch{}
+      for (let i=0;i<NUM_OSC;i++) {
+        try { this.osc[i].stop(); } catch{}
+        try { this.osc[i].disconnect(); } catch{}
+        try { this.oscGains[i].disconnect(); } catch{}
+      }
+    }
+  }
+
+  // poly manager
+  const voices = new Map(); // note -> Voice
+  const freeQueue = []; // reuse?
+  function noteOn(note, velocity=0.9) {
+    if (!ctx) return;
+    if (voices.size >= MAX_VOICES) {
+      // steal oldest
+      let oldest = null, oldestKey = null;
+      for (const [n,v] of voices.entries()) {
+        if (!oldest || v.startedAt < oldest.startedAt) { oldest = v; oldestKey = n; }
+      }
+      if (oldest) { oldest.noteOff(); voices.delete(oldestKey); }
+    }
+    const freq = midiToFreq(quantizeNote(note));
+    const v = new Voice(note, freq);
+    voices.set(note, v);
+  }
+  function noteOff(note) {
+    const v = voices.get(note);
+    if (v) { v.noteOff(); voices.delete(note); }
+  }
+  function allNotesOff() {
+    for (const v of voices.values()) v.noteOff();
+    voices.clear();
+  }
+
+  // -----------------------------
+  // Util: scales, midi, mapping
+  // -----------------------------
+  const KEY_ORDER = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  function midiToFreq(m) { return 440 * Math.pow(2, (m-69)/12); }
+  function keyIndex(key) { return KEY_ORDER.indexOf(key); }
+  const SCALES = {
+    major:[0,2,4,5,7,9,11],
+    minor:[0,2,3,5,7,8,10],
+    dorian:[0,2,3,5,7,9,10],
+    pentatonic:[0,2,4,7,9],
+    chromatic:[0,1,2,3,4,5,6,7,8,9,10,11],
+  };
+  function quantizeNote(midi) {
+    const { key, type } = state.scale;
+    const root = keyIndex(key);
+    const allowed = SCALES[type] || SCALES.major;
+    const semitone = ((midi - 0)|0) % 12;
+    const octave = Math.floor(midi/12);
+    // nearest allowed pitch class
+    let best = null, bestDist = 999;
+    for (const step of allowed) {
+      const target = (root + step) % 12;
+      const dist = Math.min((target - semitone + 12)%12, (semitone - target + 12)%12);
+      if (dist < bestDist) { bestDist = dist; best = target; }
+    }
+    const up = (best - semitone + 12) % 12;
+    const down = (semitone - best + 12) % 12;
+    const corrected = (down <= up) ? (midi - down) : (midi + up);
+    return corrected;
+  }
+
+  // Computer keyboard -> MIDI map
+  const KEYMAP = {
+    // Row Z..M (octave 4)
+    'z':48,'s':49,'x':50,'d':51,'c':52,'v':53,'g':54,'b':55,'h':56,'n':57,'j':58,'m':59,',':60,'.':61,'/':62,
+    // Row Q..] (octave 5)
+    'q':60,'2':61,'w':62,'3':63,'e':64,'r':65,'5':66,'t':67,'6':68,'y':69,'7':70,'u':71,'i':72,'9':73,'o':74,'0':75,'p':76,'[':77,']':78,
+    // Row 1..0 (octave 3)
+    '1':36,'!':36,'@':38,'3@':39 // placeholders to avoid empty
+  };
+  const DOWN = new Set();
+
+  // -----------------------------
+  // Build UI
+  // -----------------------------
+  const oscTypes = ['sine','triangle','sawtooth','square','noise'];
+  const lfoWaves = ['sine','square','random','rotation'];
+  const lfoTargets = [
+    'none','filterCutoff','filterResonance','delayTime','delayMix','flangerDepth','flangerRate','chorusDepth','chorusRate',
+    'pitch','detune','masterGain',
+    'osc1Gain','osc2Gain','osc3Gain','osc4Gain','osc5Gain'
+  ];
+  const envTargets = [
+    'filterCutoff','filterResonance','pitch','detune','masterGain',
+    'osc1Gain','osc2Gain','osc3Gain','osc4Gain','osc5Gain'
+  ];
+  const keys = KEY_ORDER;
+
+  const $oscSection = document.getElementById('oscSection');
+  const $lfoSection = document.getElementById('lfoSection');
+  const $envSection = document.getElementById('envSection');
+  const $fxSection = document.getElementById('fxSection');
+  const $piano = document.getElementById('piano');
+  const $outMeter = document.getElementById('outMeter');
+  const $start = document.getElementById('startBtn');
+  const $panic = document.getElementById('panicBtn');
+  const $glide = document.getElementById('glide');
+
+  // Osc UI
+  for (let i=0;i<NUM_OSC;i++) {
+    const card = document.createElement('div'); card.className='card col';
+    card.innerHTML = `
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div class="small">OSC ${i+1}</div>
+        <select data-osc="${i}" data-prop="type">${oscTypes.map(t=>`<option value="${t}">${t}</option>`).join('')}</select>
+      </div>
+      <label>Громк.<span><output id="og${i}">${state.osc[i].gain.toFixed(2)}</output></span>
+        <input type="range" min="0" max="1" step="0.01" value="${state.osc[i].gain}" data-osc="${i}" data-prop="gain" />
+      </label>
+      <label>Detune (¢)<span><output id="od${i}">${state.osc[i].detune|0}</output></span>
+        <input type="range" min="-1200" max="1200" step="1" value="${state.osc[i].detune|0}" data-osc="${i}" data-prop="detune" />
+      </label>
+      <div class="grid-slim">
+        <label>Attack<span><output>${state.osc[i].envelope.a.toFixed(2)}</output></span>
+          <input type="range" min="0" max="1" step="0.005" value="${state.osc[i].envelope.a}" data-osc="${i}" data-prop="env_a" />
+        </label>
+        <label>Decay<span><output>${state.osc[i].envelope.d.toFixed(2)}</output></span>
+          <input type="range" min="0" max="1.5" step="0.01" value="${state.osc[i].envelope.d}" data-osc="${i}" data-prop="env_d" />
+        </label>
+        <label>Sustain<span><output>${state.osc[i].envelope.s.toFixed(2)}</output></span>
+          <input type="range" min="0" max="1" step="0.01" value="${state.osc[i].envelope.s}" data-osc="${i}" data-prop="env_s" />
+        </label>
+        <label>Release<span><output>${state.osc[i].envelope.r.toFixed(2)}</output></span>
+          <input type="range" min="0" max="2" step="0.01" value="${state.osc[i].envelope.r}" data-osc="${i}" data-prop="env_r" />
+        </label>
+      </div>
+    `;
+    $oscSection.appendChild(card);
+  }
+
+  // LFO UI
+  for (let i=0;i<NUM_LFO;i++) {
+    const card = document.createElement('div'); card.className='card col';
+    card.innerHTML = `
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div class="small">LFO ${i+1}</div>
+        <select data-lfo="${i}" data-prop="wave">${lfoWaves.map(t=>`<option value="${t}">${t}</option>`).join('')}</select>
+      </div>
+      <label>Target<span></span>
+        <select data-lfo="${i}" data-prop="target">${lfoTargets.map(t=>`<option value="${t}">${t}</option>`).join('')}</select>
+      </label>
+      <label>Rate (Hz)<span><output>${state.lfos[i].rate.toFixed(2)}</output></span>
+        <input type="range" min="0.05" max="18" step="0.01" value="${state.lfos[i].rate}" data-lfo="${i}" data-prop="rate" />
+      </label>
+      <label>Depth<span><output>${state.lfos[i].depth.toFixed(2)}</output></span>
+        <input type="range" min="0" max="1" step="0.01" value="${state.lfos[i].depth}" data-lfo="${i}" data-prop="depth" />
+      </label>
+      <label>Phase<span><output>${state.lfos[i].phase.toFixed(2)}</output></span>
+        <input type="range" min="0" max="6.283" step="0.001" value="${state.lfos[i].phase}" data-lfo="${i}" data-prop="phase" />
+      </label>
+      <label>Smooth (port.)<span><output>${state.lfos[i].smooth.toFixed(3)}</output></span>
+        <input type="range" min="0" max="0.2" step="0.001" value="${state.lfos[i].smooth}" data-lfo="${i}" data-prop="smooth" />
+      </label>
+      <div class="row"><label class="row small"><input type="checkbox" checked data-lfo="${i}" data-prop="bipolar" /> биполярный</label></div>
+    `;
+    $lfoSection.appendChild(card);
+  }
+
+  // ENV UI
+  {
+    const card = document.createElement('div'); card.className='card col';
+    card.innerHTML = `
+      <label>Target<span></span>
+        <select id="envTarget">${envTargets.map(t=>`<option value="${t}">${t}</option>`).join('')}</select>
+      </label>
+      <label>Amount<span><output id="envAmtOut">${state.env.amount.toFixed(2)}</output></span>
+        <input id="envAmt" type="range" min="-1" max="1" step="0.01" value="${state.env.amount}">
+      </label>
+      <div class="grid-slim">
+        <label>Attack<span><output id="ea">${state.env.a.toFixed(2)}</output></span>
+          <input id="envA" type="range" min="0" max="1" step="0.005" value="${state.env.a}">
+        </label>
+        <label>Decay<span><output id="ed">${state.env.d.toFixed(2)}</output></span>
+          <input id="envD" type="range" min="0" max="1.5" step="0.01" value="${state.env.d}">
+        </label>
+        <label>Sustain<span><output id="es">${state.env.s.toFixed(2)}</output></span>
+          <input id="envS" type="range" min="0" max="1" step="0.01" value="${state.env.s}">
+        </label>
+        <label>Release<span><output id="er">${state.env.r.toFixed(2)}</output></span>
+          <input id="envR" type="range" min="0" max="2" step="0.01" value="${state.env.r}">
+        </label>
+      </div>
+    `;
+    $envSection.appendChild(card);
+  }
+
+  // FX UI
+  {
+    // Scale
+    const fx1 = document.createElement('div'); fx1.className='card col';
+    fx1.innerHTML = `
+      <div class="small">Scale</div>
+      <label>Key<span></span><select id="scaleKey">${keys.map(k=>`<option>${k}</option>`).join('')}</select></label>
+      <label>Type<span></span><select id="scaleType">${Object.keys(SCALES).map(s=>`<option>${s}</option>`).join('')}</select></label>
+    `;
+    // Filter
+    const fx2 = document.createElement('div'); fx2.className='card col';
+    fx2.innerHTML = `
+      <div class="small">Фильтр</div>
+      <label>Type<span></span><select id="fType"><option>lowpass</option><option>highpass</option><option>bandpass</option></select></label>
+      <label>Cutoff (Hz)<span><output id="fCutOut">${state.filter.cutoff|0}</output></span>
+        <input id="fCut" type="range" min="80" max="8000" step="1" value="${state.filter.cutoff}">
+      </label>
+      <label>Resonance Q<span><output id="fQOut">${state.filter.q.toFixed(2)}</output></span>
+        <input id="fQ" type="range" min="0.1" max="20" step="0.01" value="${state.filter.q}">
+      </label>
+    `;
+    // Flanger
+    const fx3 = document.createElement('div'); fx3.className='card col';
+    fx3.innerHTML = `
+      <div class="small">Flanger</div>
+      <label>Rate (Hz)<span><output id="flRateOut">${state.flanger.rate.toFixed(2)}</output></span>
+        <input id="flRate" type="range" min="0.05" max="6" step="0.01" value="${state.flanger.rate}">
+      </label>
+      <label>Depth (s)<span><output id="flDepthOut">${state.flanger.depth.toFixed(4)}</output></span>
+        <input id="flDepth" type="range" min="0.0005" max="0.01" step="0.0001" value="${state.flanger.depth}">
+      </label>
+      <label>Feedback<span><output id="flFbOut">${state.flanger.feedback.toFixed(2)}</output></span>
+        <input id="flFb" type="range" min="0" max="0.9" step="0.01" value="${state.flanger.feedback}">
+      </label>
+    `;
+    // Delay
+    const fx4 = document.createElement('div'); fx4.className='card col';
+    fx4.innerHTML = `
+      <div class="small">Delay</div>
+      <label>Time (s)<span><output id="dlTimeOut">${state.delay.time.toFixed(2)}</output></span>
+        <input id="dlTime" type="range" min="0.05" max="1.2" step="0.01" value="${state.delay.time}">
+      </label>
+      <label>Feedback<span><output id="dlFbOut">${state.delay.feedback.toFixed(2)}</output></span>
+        <input id="dlFb" type="range" min="0" max="0.9" step="0.01" value="${state.delay.feedback}">
+      </label>
+      <label>Mix<span><output id="dlMixOut">${state.delay.mix.toFixed(2)}</output></span>
+        <input id="dlMix" type="range" min="0" max="0.9" step="0.01" value="${state.delay.mix}">
+      </label>
+    `;
+    // Chorus
+    const fx5 = document.createElement('div'); fx5.className='card col';
+    fx5.innerHTML = `
+      <div class="small">Chorus (многоголосье)</div>
+      <label>Rate (Hz)<span><output id="chRateOut">${state.chorus.rate.toFixed(2)}</output></span>
+        <input id="chRate" type="range" min="0.05" max="6" step="0.01" value="${state.chorus.rate}">
+      </label>
+      <label>Depth (s)<span><output id="chDepthOut">${state.chorus.depth.toFixed(4)}</output></span>
+        <input id="chDepth" type="range" min="0.001" max="0.03" step="0.0005" value="${state.chorus.depth}">
+      </label>
+      <label>Mix<span><output id="chMixOut">${state.chorus.mix.toFixed(2)}</output></span>
+        <input id="chMix" type="range" min="0" max="0.9" step="0.01" value="${state.chorus.mix}">
+      </label>
+    `;
+    $fxSection.append(fx1,fx2,fx3,fx4,fx5);
+  }
+
+  // Piano UI (C3..E6)
+  const P_START = 48-12, P_END = 76+12;
+  for (let m=P_START;m<=P_END;m++) {
+    const pc = m % 12;
+    const isBlack = [1,3,6,8,10].includes(pc);
+    const div = document.createElement('div');
+    div.className = `key ${isBlack?'black':'white'}`; div.dataset.midi = m;
+    const label = document.createElement('div'); label.className='legend'; label.textContent = keyName(m);
+    div.appendChild(label);
+    div.addEventListener('mousedown', ()=> noteOn(m));
+    div.addEventListener('mouseup', ()=> noteOff(m));
+    div.addEventListener('mouseleave', ()=> noteOff(m));
+    $piano.appendChild(div);
+  }
+  function keyName(m) {
+    const o = Math.floor(m/12)-1;
+    return KEY_ORDER[m%12] + o;
+  }
+
+  // -----------------------------
+  // Audio initialization
+  // -----------------------------
+  let meterData;
+  let lastRAF = 0;
+
+  // Routing: voices -> inputFX -> filter -> flanger -> chorus -> delay -> master
+  let inputFX;
+
+  function initAudio() {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    meterData = new Uint8Array(analyser.frequencyBinCount);
+
+    masterGain = ctx.createGain();
+    masterGain.gain.value = 0.9;
+
+    // Filter
+    filter = ctx.createBiquadFilter();
+    filter.type = state.filter.type;
+    filter.frequency.value = state.filter.cutoff;
+    filter.Q.value = state.filter.q;
+
+    // Flanger
+    flangerDelay = ctx.createDelay(0.05);
+    flangerDelay.delayTime.value = state.flanger.depth;
+    flangerFb = ctx.createGain(); flangerFb.gain.value = state.flanger.feedback;
+    flangerLFO = ctx.createOscillator();
+    const flangerLFOGain = ctx.createGain(); flangerLFOGain.gain.value = state.flanger.depth;
+    flangerLFO.type='sine'; flangerLFO.frequency.value = state.flanger.rate;
+    flangerLFO.connect(flangerLFOGain).connect(flangerDelay.delayTime);
+    flangerLFO.start();
+
+    // Chorus (simple mod delay)
+    chorusDelay = ctx.createDelay(0.05);
+    chorusDelay.delayTime.value = 0.01;
+    chorus = ctx.createGain(); chorus.gain.value = state.chorus.mix;
+    const chorusWet = ctx.createGain(); chorusWet.gain.value = 1.0;
+    const chorusLFOGain = ctx.createGain(); chorusLFOGain.gain.value = state.chorus.depth;
+    chorusLFO = ctx.createOscillator(); chorusLFO.type='sine'; chorusLFO.frequency.value = state.chorus.rate;
+    chorusLFO.connect(chorusLFOGain).connect(chorusDelay.delayTime);
+    chorusLFO.start();
+
+    // Delay
+    delay = ctx.createDelay(1.5);
+    delay.delayTime.value = state.delay.time;
+    delayFb = ctx.createGain(); delayFb.gain.value = state.delay.feedback;
+    delayMix = ctx.createGain(); delayMix.gain.value = state.delay.mix;
+
+    inputFX = ctx.createGain();
+
+    // Connections
+    inputFX.connect(filter);
+
+    // Flanger loop
+    filter.connect(flangerDelay).connect(flangerFb).connect(filter); // feedback within filter stage
+    filter.connect(flangerDelay);
+
+    // Chorus branch
+    filter.connect(chorusDelay).connect(chorusWet).connect(chorus);
+
+    // Delay branch
+    filter.connect(delay).connect(delayFb).connect(delay);
+    filter.connect(delayMix).connect(delay);
+
+    // Sum to master
+    filter.connect(masterGain);
+    chorus.connect(masterGain);
+    delay.connect(masterGain);
+
+    masterGain.connect(analyser);
+    analyser.connect(ctx.destination);
+
+    state.started = true;
+    $panic.disabled = false;
+    raf();
+  }
+
+  // -----------------------------
+  // LFO engine (control-rate)
+  // -----------------------------
+  const lfoState = Array.from({length: NUM_LFO}, ()=>({ t:0, last:0 }));
+  function lfoSample(i, dt) {
+    const L = state.lfos[i];
+    // advance phase
+    lfoState[i].t += dt * L.rate;
+    let phase = (lfoState[i].t * 2*Math.PI + L.phase) % (2*Math.PI);
+    let v = 0;
+    switch(L.wave) {
+      case 'sine': v = Math.sin(phase); break;
+      case 'square': v = Math.sign(Math.sin(phase)) || 1; break;
+      case 'random':
+        // sample & hold at 2 Hz * rate
+        if (!lfoState[i].held || lfoState[i].holdT === undefined || lfoState[i].holdT > (0.25/L.rate)) {
+          lfoState[i].held = (Math.random()*2-1);
+          lfoState[i].holdT = 0;
+        }
+        lfoState[i].holdT += dt;
+        v = lfoState[i].held;
+        break;
+      case 'rotation':
+        // triangle
+        v = 2/Math.PI * Math.asin(Math.sin(phase));
+        break;
+      default: v = 0;
+    }
+    // depth and polarity
+    const depth = L.depth;
+    let target = L.bipolar ? v*depth : ((v*0.5+0.5)*depth);
+    // smoothing
+    const alpha = Math.exp(-dt / Math.max(0.0001, L.smooth));
+    const out = lfoState[i].last*alpha + target*(1-alpha);
+    lfoState[i].last = out;
+    return out;
+  }
+
+  function applyLFOs(dt) {
+    for (let i=0;i<NUM_LFO;i++) {
+      const val = lfoSample(i, dt);
+      const tgt = state.lfos[i].target;
+      const v = val;
+      switch (tgt) {
+        case 'filterCutoff': {
+          const base = state.filter.cutoff;
+          const mod = 1 + v*0.7;
+          filter.frequency.value = clamp(80, 12000, base * mod);
+          break;
+        }
+        case 'filterResonance': {
+          const base = state.filter.q;
+          const mod = 1 + v*0.8;
+          filter.Q.value = clamp(0.1, 20, base * mod);
+          break;
+        }
+        case 'delayTime': {
+          delay.delayTime.value = clamp(0.05, 1.2, state.delay.time * (1 + v*0.9));
+          break;
+        }
+        case 'delayMix': {
+          delayMix.gain.value = clamp(0, 0.95, state.delay.mix * (1 + v*0.9));
+          break;
+        }
+        case 'flangerDepth': {
+          flangerDelay.delayTime.value = clamp(0.0005, 0.01, state.flanger.depth * (1 + v*0.9));
+          break;
+        }
+        case 'flangerRate': {
+          flangerLFO.frequency.value = clamp(0.05, 6, state.flanger.rate * (1 + v*0.9));
+          break;
+        }
+        case 'chorusDepth': {
+          chorusDelay.delayTime.value = clamp(0.001, 0.03, state.chorus.depth * (1 + v*0.9));
+          break;
+        }
+        case 'chorusRate': {
+          chorusLFO.frequency.value = clamp(0.05, 6, state.chorus.rate * (1 + v*0.9));
+          break;
+        }
+        case 'masterGain': {
+          masterGain.gain.value = clamp(0.05, 1.2, 0.9 * (1 + v*0.6));
+          break;
+        }
+        case 'osc1Gain':
+        case 'osc2Gain':
+        case 'osc3Gain':
+        case 'osc4Gain':
+        case 'osc5Gain': {
+          const idx = parseInt(tgt[3])-1;
+          const base = state.osc[idx].gain;
+          const mod = clamp(0, 1, base * (state.lfos[i].bipolar ? (1 + v*0.9) : v));
+          // apply to active voices
+          for (const vc of voices.values()) {
+            if (vc.oscGains[idx]) vc.oscGains[idx].gain.value = mod;
+          }
+          break;
+        }
+        case 'pitch':
+        case 'detune': {
+          // cents modulation of osc frequencies
+          const cents = (tgt==='pitch' ? 40 : 15) * v;
+          for (const vc of voices.values()) {
+            for (let k=0;k<NUM_OSC;k++) {
+              const base = midiToFreq(quantizeNote(vc.note));
+              const det = (state.osc[k].detune|0) + cents;
+              vc.osc[k].frequency.value = base * Math.pow(2, det/1200);
+            }
+          }
+          break;
+        }
+        default: break;
+      }
+    }
+  }
+
+  // -----------------------------
+  // ENV (assignable)
+  // -----------------------------
+  function envTriggerOn() {
+    const now = ctx.currentTime;
+    const { a,d,s,amount,target } = state.env;
+    const envVal = { start:0, peak: amount, sustain: amount*s };
+    applyEnvValue(target, envVal.start);
+    // schedule a simple frame-based ramp via quick updates:
+    scheduleEnv(now, a, d, envVal);
+  }
+  function envTriggerOff() {
+    const now = ctx.currentTime;
+    const { r, amount, target, s } = state.env;
+    const from = amount*s;
+    const start = performance.now();
+    const dur = Math.max(10, r*1000);
+    const initial = from;
+    function step(ts) {
+      const t = Math.min(1, (ts-start)/dur);
+      const val = initial*(1 - t);
+      applyEnvValue(target, val);
+      if (t < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+  function scheduleEnv(now, a, d, envVal) {
+    const start = performance.now();
+    const aDur = Math.max(10, a*1000);
+    const dDur = Math.max(10, d*1000);
+    function attack(ts) {
+      const t = Math.min(1, (ts-start)/aDur);
+      const val = envVal.start + (envVal.peak - envVal.start)*t;
+      applyEnvValue(state.env.target, val);
+      if (t < 1) requestAnimationFrame(attack);
+      else {
+        const sStart = performance.now();
+        function decay(ts2) {
+          const t2 = Math.min(1, (ts2 - sStart)/dDur);
+          const val2 = envVal.peak + (envVal.sustain - envVal.peak)*t2;
+          applyEnvValue(state.env.target, val2);
+          if (t2 < 1) requestAnimationFrame(decay);
+        }
+        requestAnimationFrame(decay);
+      }
+    }
+    requestAnimationFrame(attack);
+  }
+  function applyEnvValue(target, val) {
+    switch(target) {
+      case 'filterCutoff': {
+        const base = state.filter.cutoff;
+        filter.frequency.value = clamp(80, 12000, base * (1 + val));
+        break;
+      }
+      case 'filterResonance': {
+        const base = state.filter.q;
+        filter.Q.value = clamp(0.1, 20, base * (1 + val));
+        break;
+      }
+      case 'masterGain': {
+        masterGain.gain.value = clamp(0.05, 1.2, 0.9 * (1 + val));
+        break;
+      }
+      case 'pitch':
+      case 'detune': {
+        const cents = (target==='pitch'? 60: 20) * val;
+        for (const vc of voices.values()) {
+          for (let k=0;k<NUM_OSC;k++) {
+            const base = midiToFreq(quantizeNote(vc.note));
+            const det = (state.osc[k].detune|0) + cents;
+            vc.osc[k].frequency.value = base * Math.pow(2, det/1200);
+          }
+        }
+        break;
+      }
+      case 'osc1Gain':
+      case 'osc2Gain':
+      case 'osc3Gain':
+      case 'osc4Gain':
+      case 'osc5Gain': {
+        const idx = parseInt(target[3])-1;
+        const base = state.osc[idx].gain;
+        const mod = clamp(0, 1, base * (1 + val));
+        for (const vc of voices.values()) {
+          if (vc.oscGains[idx]) vc.oscGains[idx].gain.value = mod;
+        }
+        break;
+      }
+    }
+  }
+
+  // -----------------------------
+  // Animation loop (meter, LFO, glide)
+  // -----------------------------
+  function raf(ts) {
+    if (!ctx) return;
+    const now = performance.now();
+    const dt = (lastRAF ? (now - lastRAF)/1000 : 0.016);
+    lastRAF = now;
+
+    analyser.getByteTimeDomainData(meterData);
+    let peak = 0;
+    for (let i=0;i<meterData.length;i++) {
+      const s = (meterData[i] - 128)/128;
+      peak = Math.max(peak, Math.abs(s));
+    }
+    $outMeter.style.width = (Math.min(1, peak*1.8)*100).toFixed(1)+'%';
+
+    applyLFOs(dt);
+
+    requestAnimationFrame(raf);
+  }
+
+  // -----------------------------
+  // Handlers
+  // -----------------------------
+  $start.addEventListener('click', () => {
+    if (!state.started) initAudio();
+  });
+  $panic.addEventListener('click', () => {
+    allNotesOff();
+  });
+  $glide.addEventListener('input', (e) => state.glide = parseFloat(e.target.value));
+
+  // Osc controls
+  $oscSection.addEventListener('input', (e) => {
+    const t = e.target;
+    const i = parseInt(t.dataset.osc);
+    if (Number.isNaN(i)) return;
+    const prop = t.dataset.prop;
+    const val = t.value;
+    if (prop === 'type') {
+      state.osc[i].type = val;
+      for (const v of voices.values()) {
+        v.osc[i].type = (val==='noise'?'sawtooth':val); // noise handled separately if implemented
+      }
+    } else if (prop === 'gain') {
+      const f = parseFloat(val); state.osc[i].gain = f;
+      document.getElementById(`og${i}`).value = f.toFixed(2);
+      for (const v of voices.values()) v.oscGains[i].gain.value = f;
+    } else if (prop === 'detune') {
+      const cents = parseInt(val); state.osc[i].detune = cents;
+      document.getElementById(`od${i}`).value = cents;
+      for (const v of voices.values()) {
+        const base = midiToFreq(quantizeNote(v.note));
+        v.osc[i].frequency.value = base * Math.pow(2, cents/1200);
+      }
+    } else if (prop && prop.startsWith('env_')) {
+      const k = prop.split('_')[1];
+      const f = parseFloat(val);
+      state.osc[i].envelope[k] = f;
+      t.previousElementSibling.firstElementChild.textContent = f.toFixed(2);
+    }
+  });
+
+  // LFO controls
+  $lfoSection.addEventListener('input', (e) => {
+    const t = e.target;
+    const i = parseInt(t.dataset.lfo);
+    if (Number.isNaN(i)) return;
+    const prop = t.dataset.prop;
+    if (prop === 'bipolar') {
+      state.lfos[i].bipolar = t.checked;
+    } else {
+      const v = (prop==='wave' || prop==='target') ? t.value : parseFloat(t.value);
+      state.lfos[i][prop] = v;
+      const out = t.previousElementSibling && t.previousElementSibling.querySelector('output');
+      if (out && typeof v === 'number') out.value = v.toFixed(prop==='phase'?2: (prop==='rate'?2: (prop==='smooth'?3:2)));
+    }
+  });
+
+  // ENV controls
+  document.getElementById('envTarget').addEventListener('change', e=> state.env.target = e.target.value);
+  document.getElementById('envAmt').addEventListener('input', e=>{
+    state.env.amount = parseFloat(e.target.value);
+    document.getElementById('envAmtOut').value = state.env.amount.toFixed(2);
+  });
+  document.getElementById('envA').addEventListener('input', e=>{ state.env.a = parseFloat(e.target.value); document.getElementById('ea').value = state.env.a.toFixed(2); });
+  document.getElementById('envD').addEventListener('input', e=>{ state.env.d = parseFloat(e.target.value); document.getElementById('ed').value = state.env.d.toFixed(2); });
+  document.getElementById('envS').addEventListener('input', e=>{ state.env.s = parseFloat(e.target.value); document.getElementById('es').value = state.env.s.toFixed(2); });
+  document.getElementById('envR').addEventListener('input', e=>{ state.env.r = parseFloat(e.target.value); document.getElementById('er').value = state.env.r.toFixed(2); });
+
+  // FX controls
+  document.getElementById('scaleKey').addEventListener('change', e=> state.scale.key = e.target.value);
+  document.getElementById('scaleType').addEventListener('change', e=> state.scale.type = e.target.value);
+  document.getElementById('fType').addEventListener('change', e=> { state.filter.type = e.target.value; if (filter) filter.type = state.filter.type; });
+  document.getElementById('fCut').addEventListener('input', e=> { state.filter.cutoff = parseFloat(e.target.value); if (filter) filter.frequency.value = state.filter.cutoff; document.getElementById('fCutOut').value = state.filter.cutoff|0; });
+  document.getElementById('fQ').addEventListener('input', e=> { state.filter.q = parseFloat(e.target.value); if (filter) filter.Q.value = state.filter.q; document.getElementById('fQOut').value = state.filter.q.toFixed(2); });
+  document.getElementById('flRate').addEventListener('input', e=> { state.flanger.rate = parseFloat(e.target.value); if (flangerLFO) flangerLFO.frequency.value = state.flanger.rate; document.getElementById('flRateOut').value = state.flanger.rate.toFixed(2); });
+  document.getElementById('flDepth').addEventListener('input', e=> { state.flanger.depth = parseFloat(e.target.value); if (flangerDelay) flangerDelay.delayTime.value = state.flanger.depth; document.getElementById('flDepthOut').value = state.flanger.depth.toFixed(4); });
+  document.getElementById('flFb').addEventListener('input', e=> { state.flanger.feedback = parseFloat(e.target.value); if (flangerFb) flangerFb.gain.value = state.flanger.feedback; document.getElementById('flFbOut').value = state.flanger.feedback.toFixed(2); });
+  document.getElementById('dlTime').addEventListener('input', e=> { state.delay.time = parseFloat(e.target.value); if (delay) delay.delayTime.value = state.delay.time; document.getElementById('dlTimeOut').value = state.delay.time.toFixed(2); });
+  document.getElementById('dlFb').addEventListener('input', e=> { state.delay.feedback = parseFloat(e.target.value); if (delayFb) delayFb.gain.value = state.delay.feedback; document.getElementById('dlFbOut').value = state.delay.feedback.toFixed(2); });
+  document.getElementById('dlMix').addEventListener('input', e=> { state.delay.mix = parseFloat(e.target.value); if (delayMix) delayMix.gain.value = state.delay.mix; document.getElementById('dlMixOut').value = state.delay.mix.toFixed(2); });
+  document.getElementById('chRate').addEventListener('input', e=> { state.chorus.rate = parseFloat(e.target.value); if (chorusLFO) chorusLFO.frequency.value = state.chorus.rate; document.getElementById('chRateOut').value = state.chorus.rate.toFixed(2); });
+  document.getElementById('chDepth').addEventListener('input', e=> { state.chorus.depth = parseFloat(e.target.value); if (chorusDelay) chorusDelay.delayTime.value = state.chorus.depth; document.getElementById('chDepthOut').value = state.chorus.depth.toFixed(4); });
+  document.getElementById('chMix').addEventListener('input', e=> { state.chorus.mix = parseFloat(e.target.value); if (chorus) chorus.gain.value = state.chorus.mix; document.getElementById('chMixOut').value = state.chorus.mix.toFixed(2); });
+
+  // -----------------------------
+  // Keyboard events
+  // -----------------------------
+  window.addEventListener('keydown', (e) => {
+    if (!state.started) return;
+    if (e.repeat) return;
+    const k = e.key.toLowerCase();
+    const midi = KEYMAP[k];
+    if (midi !== undefined) {
+      DOWN.add(k);
+      noteOn(midi);
+      envTriggerOn();
+      highlightKey(midi,true);
+      e.preventDefault();
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    const k = e.key.toLowerCase();
+    const midi = KEYMAP[k];
+    if (midi !== undefined) {
+      DOWN.delete(k);
+      noteOff(midi);
+      envTriggerOff();
+      highlightKey(midi,false);
+      e.preventDefault();
+    }
+  });
+  function highlightKey(m, on) {
+    const el = $piano.querySelector(`.key[data-midi="${m}"]`);
+    if (!el) return;
+    const pc = m % 12;
+    const isBlack = [1,3,6,8,10].includes(pc);
+    el.classList.toggle('active', on);
+  }
+
+  // -----------------------------
+  // Helpers
+  // -----------------------------
+  function clamp(min, max, x) { return Math.max(min, Math.min(max, x)); }
+
+})();
+</script>
+</body>
+</html>
